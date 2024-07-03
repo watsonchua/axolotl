@@ -14,9 +14,9 @@ datasets:
     data_files: /root/data/input_data/hansard/reply_by_points_alpaca_formatted_train.jsonl
 
 
-dataset_prepared_path: hansard_llama3_alpaca
+dataset_prepared_path: hansard_gemma2_alpaca
 val_set_size: 0.1
-output_dir: ./root/data/finetuned_models/llama3-8b-hansard
+output_dir: /root/data/finetuned_models/gemma2-9b-hansard
 
 sequence_len: 2500
 sample_packing: false

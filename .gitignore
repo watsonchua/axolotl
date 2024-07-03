@@ -1,5 +1,5 @@
 **/axolotl.egg-info
-configs
+#configs
 last_run_prepared/
 .vscode
 _site/
