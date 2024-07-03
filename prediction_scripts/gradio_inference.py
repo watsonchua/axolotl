@@ -22,7 +22,7 @@ def main(api_path, input_path, output_path):
         lines = f.readlines()
     json_lines = [json.loads(l) for l in lines]
 
-    with open('/raid/watson/predictions/hansard/reply_by_hyd_alpaca_formatted_test_predictions_openllama3b_alpaca_format_lora.jsonl', 'w') as f:
+    with open(output_path, 'w') as f:
 	    for row in tqdm(json_lines):
 		    prompt = prompt_template.format(instruction=row['instruction'], input=row['input'])
 		    result = client.predict(
@@ -35,5 +35,5 @@ def main(api_path, input_path, output_path):
     
 
 if __name__ == "__main__":
-#    main(input_path="/raid/watson/input_data/hansard/reply_by_hyd_alpaca_formatted_test.jsonl", output_path="/raid/watson/predictions/hansard/llama3_8b_lora_alpaca.jsonl")
-    Fire(main)
+    main(api_path="https://9c98ab1856a6fd2bc5.gradio.live/", input_path="/root/data/input_data/hansard/reply_by_hyd_alpaca_formatted_test.jsonl", output_path="/root/data/predictions/hansard/llama3_8b_lora_alpaca.jsonl")
+    #Fire(main)
