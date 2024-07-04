@@ -11,7 +11,7 @@ datasets:
     type: completion
     field: input
 
-dataset_prepared_path: /root/data/prepared_datasets/hansard/hansard_llama3-hyd
+# dataset_prepared_path: /root/data/prepared_datasets/hansard/hansard_llama3-hyd
 # val_set_size: 0.1
 output_dir: /root/data/finetuned_models/llama3-8b-hansard-hyd
 
