@@ -7,15 +7,13 @@ load_in_4bit: false
 strict: false
 
 datasets:
-  - path: json
-    ds_type: json
-    type: alpaca
-    data_files: /root/data/input_data/hansard/reply_by_hyd_alpaca_formatted_train.jsonl
+  - path: /root/data/input_data/hansard/reply_by_hyd_llama3_formatted_train.jsonl
+    type: completion
+    field: input
 
-
-dataset_prepared_path: /root/data/prepared_datasets/hansard_llama3_alpaca
-val_set_size: 0.1
-output_dir: /root/data/finetuned_models/llama3-8b-hansard
+dataset_prepared_path: /root/data/prepared_datasets/hansard/hansard_llama3-hyd
+# val_set_size: 0.1
+output_dir: /root/data/finetuned_models/llama3-8b-hansard-hyd
 
   
 #datasets:
@@ -53,7 +51,7 @@ optimizer: adamw_bnb_8bit
 lr_scheduler: cosine
 learning_rate: 0.0002
 
-train_on_inputs: true
+train_on_inputs: false
 group_by_length: false
 bf16: auto
 fp16:
