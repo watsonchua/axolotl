@@ -105,6 +105,9 @@ def train(
     if cfg.unfrozen_parameters:
         freeze_layers_except(model, cfg.unfrozen_parameters)
 
+    import pdb
+    pdb.set_trace()
+
     trainer = setup_trainer(
         cfg,
         train_dataset,
