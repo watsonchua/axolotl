@@ -12,11 +12,11 @@ fire
 PyYAML>=6.0
 requests
 datasets==2.19.1
-flash-attn==2.5.8
+flash-attn==2.6.1
 sentencepiece
 wandb
 einops
-xformers==0.0.26.post1
+xformers==0.0.27
 optimum==1.16.2
 hf_transfer
 colorama
