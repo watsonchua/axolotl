@@ -42,7 +42,7 @@ from axolotl.prompters import (
 from axolotl.utils.data.pretraining import wrap_pretraining_dataset
 from axolotl.utils.data.utils import md5
 from axolotl.utils.dict import DictDefault
-from axolotl.utils.distributed import is_main_process, zero_first
+from axolotl.utils.distributed import is_local_main_process, zero_first
 from axolotl.utils.trainer import (
     calculate_total_num_steps,
     process_datasets_for_packing,
@@ -54,7 +54,7 @@ LOG = logging.getLogger("axolotl")
 def prepare_dataset(cfg, tokenizer):
     prompters = []
     if not cfg.pretraining_dataset:
-        with zero_first(is_main_process()):
+        with zero_first(is_local_main_process()):
             if cfg.test_datasets:
                 train_dataset, _, prompters = load_prepare_datasets(
                     tokenizer, cfg, DEFAULT_DATASET_PREPARED_PATH, split="train"
@@ -160,8 +160,12 @@ def load_tokenized_prepared_datasets(
     use_auth_token = cfg.hf_use_auth_token
     try:
         if cfg.push_dataset_to_hub:
+            LOG.info(
+                f"Attempting to load prepared dataset from Huggingface hub at {cfg.push_dataset_to_hub} (version {ds_hash})..."
+            )
             dataset = load_dataset(
-                f"{cfg.push_dataset_to_hub}/{ds_hash}",
+                cfg.push_dataset_to_hub,
+                ds_hash,
                 token=use_auth_token,
             )
             dataset = dataset[split]
@@ -170,6 +174,7 @@ def load_tokenized_prepared_datasets(
 
     # pylint: disable=duplicate-code
     if dataset:
+        # This is for the case where we already loaded a pretokenized dataset from the hub
         ...
     elif (
         cfg.dataset_prepared_path
@@ -180,7 +185,14 @@ def load_tokenized_prepared_datasets(
         dataset = load_from_disk(str(prepared_ds_path))
         LOG.info("Prepared dataset loaded from disk...")
     else:
-        LOG.info(f"Unable to find prepared dataset in {prepared_ds_path}")
+        if cfg.push_dataset_to_hub:
+            LOG.info("Unable to find prepared dataset in Huggingface hub")
+        if cfg.is_preprocess:
+            LOG.info(
+                f"Skipping prepared dataset in {prepared_ds_path} for pre-processing..."
+            )
+        else:
+            LOG.info(f"Unable to find prepared dataset in {prepared_ds_path}")
         LOG.info("Loading raw datasets...")
         if not cfg.is_preprocess:
             LOG.warning(
@@ -198,6 +210,8 @@ def load_tokenized_prepared_datasets(
         def for_d_in_datasets(dataset_configs):
             for dataset in dataset_configs:
                 if dataset.name and isinstance(dataset.name, list):
+                    # load_dataset doesn't properly handle multiple named configurations
+                    # at the same time for a given dataset
                     for name in dataset.name:
                         yield DictDefault({**dataset, "name": name})
                 else:
@@ -208,6 +222,8 @@ def load_tokenized_prepared_datasets(
             ds: Optional[Union[Dataset, DatasetDict]] = None
             ds_from_hub = False
             try:
+                # this is just a basic check to see if the path is a
+                # valid HF dataset that's loadable
                 load_dataset(
                     config_dataset.path,
                     name=config_dataset.name,
@@ -428,10 +444,12 @@ def load_tokenized_prepared_datasets(
             dataset.save_to_disk(str(prepared_ds_path))
             if cfg.push_dataset_to_hub:
                 LOG.info(
-                    f"Saving merged prepared dataset with push_to_hub... {cfg.push_dataset_to_hub}/{ds_hash}"
+                    f"Pushing merged prepared dataset to Huggingface hub at {cfg.push_dataset_to_hub} (version {ds_hash})..."
                 )
                 dataset.push_to_hub(
-                    f"{cfg.push_dataset_to_hub}/{ds_hash}", private=True
+                    cfg.push_dataset_to_hub,
+                    ds_hash,
+                    private=True,
                 )
 
     return dataset, prompters

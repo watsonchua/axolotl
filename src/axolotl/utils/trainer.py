@@ -1,4 +1,5 @@
 """Module containing the Trainer class and related functions"""
+import json
 import math
 import os
 import random
@@ -15,7 +16,7 @@ from torch.utils.data import DataLoader, RandomSampler
 from transformers.utils import is_torch_bf16_gpu_available
 
 from axolotl.core.trainer_builder import HFCausalTrainerBuilder, HFRLTrainerBuilder
-from axolotl.utils.distributed import is_main_process, reduce_and_broadcast, zero_first
+from axolotl.utils.distributed import reduce_and_broadcast
 from axolotl.utils.samplers import MultipackBatchSampler, get_dataset_lengths
 
 LOG = get_logger("axolotl")
@@ -182,90 +183,88 @@ def process_datasets_for_packing(cfg, train_dataset, eval_dataset):
         sequence_len=cfg.sequence_len,
         min_sequence_len=cfg.min_sample_len or 2,
     )
-    with zero_first(is_main_process()):
-        if cfg.is_preprocess:
-            min_input_len = np.min(get_dataset_lengths(train_dataset))
-            LOG.debug(f"min_input_len: {min_input_len}", main_process_only=True)
-            max_input_len = np.max(get_dataset_lengths(train_dataset))
-            LOG.debug(f"max_input_len: {max_input_len}", main_process_only=True)
 
-        if (
-            cfg.is_mistral_derived_model and cfg.flash_attention
-        ) or cfg.model_config_type == "mamba":
-            LOG.info("dropping attention_mask column")
-            train_dataset = train_dataset.remove_columns("attention_mask")
-            if eval_dataset:
-                eval_dataset = eval_dataset.remove_columns("attention_mask")
+    if cfg.is_preprocess:
+        min_input_len = np.min(get_dataset_lengths(train_dataset))
+        LOG.debug(f"min_input_len: {min_input_len}", main_process_only=True)
+        max_input_len = np.max(get_dataset_lengths(train_dataset))
+        LOG.debug(f"max_input_len: {max_input_len}", main_process_only=True)
 
-        if cfg.model_config_type == "falcon":
-            LOG.info("dropping token_type_ids column if it exists")
-            if "token_type_ids" in train_dataset.column_names:
-                train_dataset = train_dataset.remove_columns("token_type_ids")
-            if eval_dataset and "token_type_ids" in eval_dataset.column_names:
-                eval_dataset = eval_dataset.remove_columns("token_type_ids")
+    if cfg.model_config_type == "mamba":
+        LOG.info("dropping attention_mask column")
+        train_dataset = train_dataset.remove_columns("attention_mask")
+        if eval_dataset:
+            eval_dataset = eval_dataset.remove_columns("attention_mask")
 
-        train_dataset = train_dataset.filter(
+    if cfg.model_config_type == "falcon":
+        LOG.info("dropping token_type_ids column if it exists")
+        if "token_type_ids" in train_dataset.column_names:
+            train_dataset = train_dataset.remove_columns("token_type_ids")
+        if eval_dataset and "token_type_ids" in eval_dataset.column_names:
+            eval_dataset = eval_dataset.remove_columns("token_type_ids")
+
+    train_dataset = train_dataset.filter(
+        drop_long,
+        num_proc=cfg.dataset_processes,
+        load_from_cache_file=not cfg.is_preprocess,
+        desc="Dropping Long Sequences",
+    )
+    if eval_dataset:
+        eval_dataset = eval_dataset.filter(
             drop_long,
             num_proc=cfg.dataset_processes,
             load_from_cache_file=not cfg.is_preprocess,
             desc="Dropping Long Sequences",
         )
-        if eval_dataset:
-            eval_dataset = eval_dataset.filter(
-                drop_long,
-                num_proc=cfg.dataset_processes,
-                load_from_cache_file=not cfg.is_preprocess,
-                desc="Dropping Long Sequences",
-            )
 
-        if cfg.group_by_length:
-            train_dataset = train_dataset.map(
-                add_length,
-                num_proc=cfg.dataset_processes,
-                load_from_cache_file=not cfg.is_preprocess,
-                desc="Group By Length",
-            )
+    if cfg.group_by_length:
+        train_dataset = train_dataset.map(
+            add_length,
+            num_proc=cfg.dataset_processes,
+            load_from_cache_file=not cfg.is_preprocess,
+            desc="Group By Length",
+        )
 
-        if cfg.use_pose:
-            pose_kwargs = {}
-            if cfg.pose_num_chunks is not None:
-                pose_kwargs["chunks"] = cfg.pose_num_chunks
-            pose_fn = partial(
-                add_pose_position_ids,
-                max_context_len=cfg.pose_max_context_len,
-                split_on_token_ids=cfg.pose_split_on_token_ids,
-                **pose_kwargs,
-            )
-            train_dataset = train_dataset.map(
-                pose_fn,
-                num_proc=cfg.dataset_processes,
-                load_from_cache_file=not cfg.is_preprocess,
-                desc="Add position_id column (PoSE)",
-            )
-            train_dataset = train_dataset.sort("sequence_len")
-            if cfg.eval_sample_packing is not False:
-                if eval_dataset:
-                    eval_dataset = eval_dataset.map(
-                        pose_fn,
-                        num_proc=cfg.dataset_processes,
-                        load_from_cache_file=not cfg.is_preprocess,
-                        desc="Add position_id column (PoSE)",
-                    )
-        elif cfg.sample_packing:
-            train_dataset = train_dataset.map(
-                add_position_ids,
-                num_proc=cfg.dataset_processes,
-                load_from_cache_file=not cfg.is_preprocess,
-                desc="Add position_id column (Sample Packing)",
-            )
-            if cfg.eval_sample_packing is not False:
-                if eval_dataset:
-                    eval_dataset = eval_dataset.map(
-                        add_position_ids,
-                        num_proc=cfg.dataset_processes,
-                        load_from_cache_file=not cfg.is_preprocess,
-                        desc="Add position_id column (Sample Packing)",
-                    )
+    if cfg.use_pose:
+        pose_kwargs = {}
+        if cfg.pose_num_chunks is not None:
+            pose_kwargs["chunks"] = cfg.pose_num_chunks
+        pose_fn = partial(
+            add_pose_position_ids,
+            max_context_len=cfg.pose_max_context_len,
+            split_on_token_ids=cfg.pose_split_on_token_ids,
+            **pose_kwargs,
+        )
+        train_dataset = train_dataset.map(
+            pose_fn,
+            num_proc=cfg.dataset_processes,
+            load_from_cache_file=not cfg.is_preprocess,
+            desc="Add position_id column (PoSE)",
+        )
+        train_dataset = train_dataset.sort("sequence_len")
+        if cfg.eval_sample_packing is not False:
+            if eval_dataset:
+                eval_dataset = eval_dataset.map(
+                    pose_fn,
+                    num_proc=cfg.dataset_processes,
+                    load_from_cache_file=not cfg.is_preprocess,
+                    desc="Add position_id column (PoSE)",
+                )
+    elif cfg.sample_packing:
+        train_dataset = train_dataset.map(
+            add_position_ids,
+            num_proc=cfg.dataset_processes,
+            load_from_cache_file=not cfg.is_preprocess,
+            desc="Add position_id column (Sample Packing)",
+        )
+        if cfg.eval_sample_packing is not False:
+            if eval_dataset:
+                eval_dataset = eval_dataset.map(
+                    add_position_ids,
+                    num_proc=cfg.dataset_processes,
+                    load_from_cache_file=not cfg.is_preprocess,
+                    desc="Add position_id column (Sample Packing)",
+                )
 
     return train_dataset, eval_dataset
 
@@ -391,6 +390,26 @@ def calculate_total_num_steps(cfg, train_dataset, update=True):
     return total_num_steps
 
 
+def setup_torch_compile_env(cfg):
+    if cfg.torch_compile:
+        if not cfg.torch_compile_backend:
+            os.environ["ACCELERATE_DYNAMO_BACKEND"] = "INDUCTOR"
+        else:
+            os.environ["ACCELERATE_DYNAMO_BACKEND"] = cfg.torch_compile_backend.upper()
+
+
+def setup_deepspeed_env(cfg, stage=None):
+    from transformers.integrations.deepspeed import HfTrainerDeepSpeedConfig
+
+    os.environ["ACCELERATE_USE_DEEPSPEED"] = "true"
+    os.environ["ACCELERATE_DEEPSPEED_CONFIG_FILE"] = cfg.deepspeed
+    if stage:
+        os.environ["ACCELERATE_DEEPSPEED_ZERO_STAGE"] = str(stage)
+        if stage == 3:
+            os.environ["ACCELERATE_DEEPSPEED_ZERO3_INIT"] = "true"
+    HfTrainerDeepSpeedConfig(cfg.deepspeed)
+
+
 def setup_fsdp_envs(cfg):
     os.environ["ACCELERATE_USE_FSDP"] = "true"
     if cfg.fsdp_config.fsdp_activation_checkpointing:
@@ -417,8 +436,16 @@ def prepare_optim_env(cfg):
     if cfg.fsdp:
         setup_fsdp_envs(cfg)
     elif cfg.deepspeed:
-        os.environ["ACCELERATE_USE_DEEPSPEED"] = "true"
-        os.environ["ACCELERATE_DEEPSPEED_CONFIG_FILE"] = cfg.deepspeed
+        stage = None
+        # check if the cfg.deepspeed is a file
+        if os.path.isfile(cfg.deepspeed):
+            # parse with json
+            with open(cfg.deepspeed, "r", encoding="utf-8") as fin:
+                deepspeed_config = json.load(fin)
+            stage = deepspeed_config.get("zero_optimization", {}).get("stage", None)
+        setup_deepspeed_env(cfg, stage=stage)
+
+    setup_torch_compile_env(cfg)
 
     if (cfg.bf16 == "auto" and is_torch_bf16_gpu_available()) or cfg.bf16 is True:
         os.environ["ACCELERATE_MIXED_PRECISION"] = "bf16"
@@ -426,8 +453,14 @@ def prepare_optim_env(cfg):
         os.environ["ACCELERATE_MIXED_PRECISION"] = "fp16"
 
 
+def prepare_opinionated_env(cfg):
+    if cfg.qlora_sharded_model_loading:
+        # model loading is forked after the tokenizer
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
 def setup_trainer(cfg, train_dataset, eval_dataset, model, tokenizer, total_num_steps):
-    if cfg.rl in ["dpo", "ipo", "orpo", "kto"]:
+    if cfg.rl in ["dpo", "ipo", "orpo", "kto", "simpo"]:
         trainer_builder = HFRLTrainerBuilder(cfg, model[0], tokenizer)
         trainer_builder.model_ref = model[1]
         trainer_builder.peft_config = model[2]

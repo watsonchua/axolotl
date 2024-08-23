@@ -1,4 +1,4 @@
-base_model: meta-llama/Meta-Llama-3-8B-Instruct
+base_model: NousResearch/Meta-Llama-3-8B-Instruct
 model_type: LlamaForCausalLM
 tokenizer_type: AutoTokenizer
 
@@ -74,3 +74,5 @@ deepspeed:
 weight_decay: 0.0
 fsdp:
 fsdp_config:
+special_tokens:
+   pad_token: <|end_of_text|>

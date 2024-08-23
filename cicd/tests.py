@@ -1,6 +1,8 @@
 """
  modal application to run axolotl gpu tests in Modal
  """
+# pylint: disable=duplicate-code
+
 import os
 import pathlib
 import tempfile
@@ -21,11 +23,12 @@ df_template = template_env.get_template("Dockerfile.jinja")
 df_args = {
     "AXOLOTL_EXTRAS": os.environ.get("AXOLOTL_EXTRAS", ""),
     "AXOLOTL_ARGS": os.environ.get("AXOLOTL_ARGS", ""),
-    "PYTORCH_VERSION": os.environ.get("PYTORCH_VERSION", "2.0.1"),
-    "BASE_TAG": os.environ.get("BASE_TAG", "main-base-py3.10-cu118-2.0.1"),
-    "CUDA": os.environ.get("CUDA", "118"),
+    "PYTORCH_VERSION": os.environ.get("PYTORCH_VERSION", "2.3.1"),
+    "BASE_TAG": os.environ.get("BASE_TAG", "main-base-py3.11-cu121-2.3.1"),
+    "CUDA": os.environ.get("CUDA", "121"),
     "GITHUB_REF": os.environ.get("GITHUB_REF", "refs/heads/main"),
     "GITHUB_SHA": os.environ.get("GITHUB_SHA", ""),
+    "NIGHTLY_BUILD": os.environ.get("NIGHTLY_BUILD", ""),
 }
 
 dockerfile_contents = df_template.render(**df_args)
