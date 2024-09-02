@@ -24,7 +24,7 @@ output_dir: /root/data/finetuned_models/llama3.1-8b-mpa-train-0
 #output_dir: ./outputs/lora-out
 
 
-sequence_len: 10000
+sequence_len: 90000
 sample_packing: false
 pad_to_sequence_len: true
 
@@ -45,7 +45,7 @@ wandb_watch:
 wandb_name:
 wandb_log_model:
 
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 8
 micro_batch_size: 1
 num_epochs: 3
 optimizer: paged_adamw_32bit

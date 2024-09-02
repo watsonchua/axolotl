@@ -7,13 +7,13 @@ load_in_4bit: false
 strict: false
 
 datasets:
-  - path: /root/data/input_data/mpa/dangerous_goods/train_test/train_0.jsonl
+  - path: /root/data/input_data/mpa/dangerous_goods/train_test/train_2.jsonl
     type: completion
     field: input
 
 # dataset_prepared_path: /root/data/prepared_datasets/hansard/hansard_llama3-hyd
 # val_set_size: 0.1
-output_dir: /root/data/finetuned_models/llama3.1-8b-mpa-train-0
+output_dir: /root/data/finetuned_models/llama3.1-8b-mpa-train-2
 
   
 #datasets:
@@ -23,7 +23,7 @@ output_dir: /root/data/finetuned_models/llama3.1-8b-mpa-train-0
 #val_set_size: 0.05
 #output_dir: ./outputs/lora-out
 
-sequence_len: 90000
+sequence_len: 4096
 sample_packing: false
 pad_to_sequence_len: true
 
@@ -66,11 +66,11 @@ xformers_attention:
 flash_attention: true
 s2_attention:
 
-warmup_steps: 10
+warmup_steps: 5
 evals_per_epoch: 4
 eval_table_size:
 eval_max_new_tokens: 128
-saves_per_epoch: 1
+saves_per_epoch: 0
 debug:
 deepspeed:
 weight_decay: 0.0
