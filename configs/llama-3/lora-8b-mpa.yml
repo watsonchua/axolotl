@@ -7,13 +7,13 @@ load_in_4bit: false
 strict: false
 
 datasets:
-  - path: /root/data/input_data/mpa/dangerous_goods/train_test/train_2.jsonl
+  - path: /root/data/input_data/mpa/dangerous_goods/train_test/train_0.jsonl
     type: completion
     field: input
 
 # dataset_prepared_path: /root/data/prepared_datasets/hansard/hansard_llama3-hyd
 # val_set_size: 0.1
-output_dir: /root/data/finetuned_models/llama3.1-8b-mpa-train-2
+output_dir: /root/data/finetuned_models/llama3.1-8b-mpa-train-0
 
   
 #datasets:
@@ -69,7 +69,7 @@ s2_attention:
 warmup_steps: 5
 evals_per_epoch: 4
 eval_table_size:
-eval_max_new_tokens: 128
+eval_max_new_tokens: 500
 saves_per_epoch: 0
 debug:
 deepspeed:
@@ -78,3 +78,11 @@ fsdp:
 fsdp_config:
 special_tokens:
    pad_token: <|end_of_text|>
+
+
+inference_max_new_tokens: 500
+gradio_temperature: 0.01
+gradio_server_name: "0.0.0.0"
+gradio_share: True
+gradio_server_port: 8501
+stop_strings: ["<eot_id>"]
