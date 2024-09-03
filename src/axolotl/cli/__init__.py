@@ -166,6 +166,7 @@ def do_inference(
     cli_args: TrainerCliArgs,
 ):
     model, tokenizer = load_model_and_tokenizer(cfg=cfg, cli_args=cli_args)
+    print(model)
     prompter = cli_args.prompter
     default_tokens = {"unk_token": "<unk>", "bos_token": "<s>", "eos_token": "</s>"}
 
@@ -214,6 +215,7 @@ def do_inference(
                 output_attentions=False,
                 output_hidden_states=False,
                 output_scores=False,
+                stop_strings=cfg.get("stop_strings",None)
             )
             streamer = TextStreamer(tokenizer)
             generated = model.generate(
@@ -233,6 +235,7 @@ def do_inference_gradio(
     import gradio as gr
 
     model, tokenizer = load_model_and_tokenizer(cfg=cfg, cli_args=cli_args)
+    print(model)
     prompter = cli_args.prompter
     default_tokens = {"unk_token": "<unk>", "bos_token": "<s>", "eos_token": "</s>"}
 
@@ -278,6 +281,7 @@ def do_inference_gradio(
                 output_attentions=False,
                 output_hidden_states=False,
                 output_scores=False,
+                stop_strings=cfg.get("stop_strings", None)
             )
             streamer = TextIteratorStreamer(tokenizer)
             generation_kwargs = {
