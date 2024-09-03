@@ -41,6 +41,8 @@ def generate_with_model(eval_prompt, ft_model, eval_tokenizer, temperature, repe
 
 
 def load_model(cfg, lora_model_dir):
+    device = torch.device("cuda")
+    print(device)
     base_model_id = cfg["base_model"]
 
 
@@ -72,15 +74,14 @@ def load_model(cfg, lora_model_dir):
     # unk token was used as pad token during finetuning, must set the same here
     # eval_tokenizer.pad_token = eval_tokenizer.unk_token # TODO: check which token is used as pad token
     eval_tokenizer.pad_token = cfg["special_tokens"]["pad_token"]
-    if lora_model_dir is not None:
+    if lora_model_dir is not None:        
         ft_model = PeftModel.from_pretrained(base_model, lora_model_dir)
+        ft_model.to(device)
     else:
+        print("WARN: LORA_MODEL_DIR not specified. Loading base model.")
         ft_model = base_model
 
 
-    device = torch.device("cuda")
-    print(device)
-    ft_model.to(device)
     ft_model.eval()
 
     print(ft_model)
@@ -90,7 +91,7 @@ def load_model(cfg, lora_model_dir):
 
 
 
-def main(config_path, lora_model_dir):
+def main(config_path, lora_model_dir=None):
     with open(config_path, 'r') as f:
         cfg = yaml.load(f, Loader=yaml.Loader)
     finetuned_model, eval_tokenizer = load_model(cfg, lora_model_dir)
