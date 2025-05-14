@@ -10,12 +10,15 @@ from axolotl.datasets import ConstantLengthDataset, TokenizedPromptDataset
 from axolotl.prompt_tokenizers import AlpacaPromptTokenizingStrategy
 from axolotl.prompters import AlpacaPrompter
 
+from tests.hf_offline_utils import enable_hf_offline
+
 
 class TestPacking(unittest.TestCase):
     """
     Test class for packing dataset sequences
     """
 
+    @enable_hf_offline
     def setUp(self) -> None:
         # pylint: disable=duplicate-code
         self.tokenizer = AutoTokenizer.from_pretrained("huggyllama/llama-7b")

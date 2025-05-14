@@ -1,6 +1,7 @@
 **/axolotl.egg-info
 #configs
 last_run_prepared/
+outputs
 .vscode
 _site/
 
@@ -180,6 +181,12 @@ prepared-datasets/
 submit.sh
 *.out*
 
+# Quartodoc generated files
+objects.json
+site_libs/
+
 typings/
 out/
-outputs/
+
+# vim
+*.swp

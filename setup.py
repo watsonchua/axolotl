@@ -1,25 +1,22 @@
 """setup.py for axolotl"""
 
+import ast
+import os
 import platform
 import re
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 from setuptools import find_packages, setup
 
 
-def parse_requirements():
+def parse_requirements(extras_require_map):
     _install_requires = []
     _dependency_links = []
     with open("./requirements.txt", encoding="utf-8") as requirements_file:
         lines = [r.strip() for r in requirements_file.readlines()]
         for line in lines:
-            is_extras = (
-                "flash-attn" in line
-                or "flash-attention" in line
-                or "deepspeed" in line
-                or "mamba-ssm" in line
-                or "lion-pytorch" in line
-            )
+            is_extras = "deepspeed" in line or "mamba-ssm" in line
             if line.startswith("--extra-index-url"):
                 # Handle custom index URLs
                 _, url = line.split()
@@ -27,16 +24,34 @@ def parse_requirements():
             elif not is_extras and line and line[0] != "#":
                 # Handle standard packages
                 _install_requires.append(line)
-
     try:
         xformers_version = [req for req in _install_requires if "xformers" in req][0]
+        autoawq_version = [req for req in _install_requires if "autoawq" in req][0]
         if "Darwin" in platform.system():
-            # don't install xformers on MacOS
-            _install_requires.pop(_install_requires.index(xformers_version))
+            # skip packages not compatible with OSX
+            skip_packages = [
+                "bitsandbytes",
+                "triton",
+                "mamba-ssm",
+                "xformers",
+                "autoawq",
+                "liger-kernel",
+            ]
+            _install_requires = [
+                req
+                for req in _install_requires
+                if re.split(r"[>=<]", req)[0].strip() not in skip_packages
+            ]
+            print(
+                _install_requires, [req in skip_packages for req in _install_requires]
+            )
         else:
             # detect the version of torch already installed
             # and set it so dependencies don't clobber the torch version
-            torch_version = version("torch")
+            try:
+                torch_version = version("torch")
+            except PackageNotFoundError:
+                torch_version = "2.6.0"  # default to torch 2.6
             _install_requires.append(f"torch=={torch_version}")
 
             version_match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", torch_version)
@@ -49,66 +64,111 @@ def parse_requirements():
             else:
                 raise ValueError("Invalid version format")
 
-            if (major, minor) >= (2, 3):
+            if (major, minor) >= (2, 7):
+                _install_requires.pop(_install_requires.index(xformers_version))
+                # _install_requires.append("xformers==0.0.29.post3")  # xformers seems to be hard pinned to 2.6.0
+                extras_require_map["vllm"] = ["vllm==0.8.5.post1"]
+            elif (major, minor) >= (2, 6):
+                _install_requires.pop(_install_requires.index(xformers_version))
+                _install_requires.append(
+                    "xformers==0.0.29.post2"
+                )  # vllm needs post2 w torch 2.6
+                extras_require_map["vllm"] = ["vllm==0.8.5.post1"]
+            elif (major, minor) >= (2, 5):
+                _install_requires.pop(_install_requires.index(xformers_version))
+                if patch == 0:
+                    _install_requires.append("xformers==0.0.28.post2")
+                else:
+                    _install_requires.append("xformers>=0.0.28.post3")
+                _install_requires.pop(_install_requires.index(autoawq_version))
+            elif (major, minor) >= (2, 4):
                 if patch == 0:
                     _install_requires.pop(_install_requires.index(xformers_version))
-                    _install_requires.append("xformers>=0.0.26.post1")
-            elif (major, minor) >= (2, 2):
-                _install_requires.pop(_install_requires.index(xformers_version))
-                _install_requires.append("xformers>=0.0.25.post1")
+                    _install_requires.append("xformers>=0.0.27")
+                else:
+                    _install_requires.pop(_install_requires.index(xformers_version))
+                    _install_requires.append("xformers==0.0.28.post1")
             else:
-                _install_requires.pop(_install_requires.index(xformers_version))
-                _install_requires.append("xformers>=0.0.23.post1")
+                raise ValueError("axolotl requires torch>=2.4")
 
     except PackageNotFoundError:
         pass
+    return _install_requires, _dependency_links, extras_require_map
 
-    return _install_requires, _dependency_links
+
+def get_package_version():
+    with open(
+        Path(os.path.dirname(os.path.abspath(__file__)))
+        / "src"
+        / "axolotl"
+        / "__init__.py",
+        "r",
+        encoding="utf-8",
+    ) as fin:
+        version_match = re.search(r"^__version__\s*=\s*(.*)$", fin.read(), re.MULTILINE)
+    version_ = ast.literal_eval(version_match.group(1))
+    return version_
 
 
-install_requires, dependency_links = parse_requirements()
+extras_require = {
+    "flash-attn": ["flash-attn==2.7.4.post1"],
+    "ring-flash-attn": [
+        "flash-attn==2.7.4.post1",
+        "ring-flash-attn>=0.1.4",
+        "yunchang==0.6.0",
+    ],
+    "deepspeed": [
+        "deepspeed==0.15.4",
+        "deepspeed-kernels",
+    ],
+    "mamba-ssm": [
+        "mamba-ssm==1.2.0.post1",
+        "causal_conv1d",
+    ],
+    "auto-gptq": [
+        "auto-gptq==0.5.1",
+    ],
+    "mlflow": [
+        "mlflow",
+    ],
+    "galore": [
+        "galore_torch",
+    ],
+    "apollo": [
+        "apollo-torch",
+    ],
+    "optimizers": [
+        "galore_torch",
+        "apollo-torch",
+        "lomo-optim==0.1.1",
+        "torch-optimi==0.2.1",
+        "came_pytorch==0.1.3",
+    ],
+    "ray": [
+        "ray[train]",
+    ],
+    "vllm": [
+        "vllm==0.7.2",
+    ],
+    "llmcompressor": [
+        "llmcompressor==0.5.1",
+    ],
+}
 
+install_requires, dependency_links, extras_require_build = parse_requirements(
+    extras_require
+)
 
 setup(
-    name="axolotl",
-    version="0.4.1",
-    description="LLM Trainer",
-    long_description="Axolotl is a tool designed to streamline the fine-tuning of various AI models, offering support for multiple configurations and architectures.",
+    version=get_package_version(),
     package_dir={"": "src"},
-    packages=find_packages(),
+    packages=find_packages("src"),
     install_requires=install_requires,
     dependency_links=dependency_links,
-    extras_require={
-        "flash-attn": [
-            "flash-attn==2.6.3",
-        ],
-        "fused-dense-lib": [
-            "fused-dense-lib  @ git+https://github.com/Dao-AILab/flash-attention@v2.6.2#subdirectory=csrc/fused_dense_lib",
-        ],
-        "deepspeed": [
-            "deepspeed==0.14.4",
-            "deepspeed-kernels",
-        ],
-        "mamba-ssm": [
-            "mamba-ssm==1.2.0.post1",
-        ],
-        "auto-gptq": [
-            "auto-gptq==0.5.1",
-        ],
-        "mlflow": [
-            "mlflow",
-        ],
-        "lion-pytorch": [
-            "lion-pytorch==0.1.2",
-        ],
-        "galore": [
-            "galore_torch",
-        ],
-        "optimizers": [
-            "galore_torch",
-            "lion-pytorch==0.1.2",
-            "lomo-optim==0.1.1",
-            "torch-optimi==0.2.1",
+    entry_points={
+        "console_scripts": [
+            "axolotl=axolotl.cli.main:main",
         ],
     },
+    extras_require=extras_require_build,
 )

@@ -1,40 +1,17 @@
 """module for patching with unsloth optimizations"""
 
 import inspect
-import re
 import types
-from typing import Tuple
 
 import torch
 from accelerate.logging import get_logger
 from peft import PeftModelForCausalLM
 from torch import nn
-from transformers.models.llama.modeling_llama import (
-    LlamaFlashAttention2,
-    LlamaForCausalLM,
-)
+from transformers.models.llama.modeling_llama import LlamaFlashAttention2
+
+from axolotl.monkeypatch.utils import detab_code
 
 LOG = get_logger("axolotl.monkeypatch.unsloth")
-
-ORIGINAL_CEL_CODE = """# Shift so that tokens < n predict n
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        # Flatten the tokens
-        loss_fct = CrossEntropyLoss()
-        shift_logits = shift_logits.view(-1, self.config.vocab_size)
-        shift_labels = shift_labels.view(-1)
-        # Enable model parallelism
-        shift_labels = shift_labels.to(shift_logits.device)
-        loss = loss_fct(shift_logits, shift_labels)
-"""
-
-PATCHED_CEL_CODE = """shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        loss = fast_cross_entropy_loss(
-            logits = shift_logits,
-            labels = shift_labels,
-        )
-"""
 
 ORIGINAL_QKV_CODE = """
     query_states = self.q_proj(hidden_states)
@@ -75,17 +52,6 @@ def original_apply_o(self, hidden_states):
     return attn_output
 
 
-def get_forward_code() -> str:
-    forward = inspect.getsource(LlamaForCausalLM.forward)
-    return forward
-
-
-def check_cel_is_patchable() -> bool:
-    forward = get_forward_code()
-    forward, _ = detab_code(forward)
-    return ORIGINAL_CEL_CODE in forward
-
-
 def get_self_attn_code() -> str:
     forward = inspect.getsource(LlamaFlashAttention2.forward)
     return forward
@@ -98,59 +64,43 @@ def check_self_attn_is_patchable() -> bool:
 
 
 def integrate_cross_entropy_loss_patch(model_type: str = "llama") -> None:
+    from unsloth.kernels.cross_entropy_loss import fast_cross_entropy_loss
+
+    def UnslothForCausalLMLoss(  # pylint: disable=invalid-name
+        logits,
+        labels,
+        vocab_size: int,  # pylint: disable=unused-argument
+        num_items_in_batch: int = None,
+        ignore_index: int = -100,  # pylint: disable=unused-argument
+        **kwargs,  # pylint: disable=unused-argument
+    ):
+        # Upcast to float if we need to compute the loss to avoid potential precision issues
+        logits = logits.float()
+        # Shift so that tokens < n predict n
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        loss = fast_cross_entropy_loss(
+            logits=shift_logits, labels=shift_labels, n_items=num_items_in_batch
+        )
+        return loss
+
     if model_type == "llama":
-        forward = get_forward_code()
-        LlamaForCausalLM._original_forward = forward  # pylint: disable=protected-access
-        forward, _ = detab_code(forward)
-        assert ORIGINAL_CEL_CODE in forward, "Original forward code not found"
+        from transformers.loss import loss_utils
 
-        forward = forward.replace(
-            "@add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)", ""
-        )
-        forward = forward.replace(
-            "@replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)",
-            "",
-        )
-        forward = forward.replace(ORIGINAL_CEL_CODE, PATCHED_CEL_CODE)
-        forward = forward.replace(
-            "def forward(",
-            "def fast_cross_entropy_loss_forward(",
-            1,
-        )
-
-        # load imports necessary
-        import transformers.models.llama.modeling_llama
-
-        items_to_import = []
-        for item in dir(transformers.models.llama.modeling_llama):
-            if item in forward:
-                items_to_import.append(item)
-
-        exec(  # pylint: disable=exec-used  # nosec B102
-            "from unsloth.kernels.cross_entropy_loss import fast_cross_entropy_loss",
-            globals(),
-        )
-
-        exec(  # pylint: disable=exec-used  # nosec B102
-            "from transformers.models.llama.modeling_llama import ("
-            + ", ".join(x for x in items_to_import)
-            + ")",
-            globals(),
-        )
-        exec(forward, globals())  # pylint: disable=exec-used  # nosec B102
-        LOG.info("patching unsloth fast_cross_entropy_loss", main_process_only=True)
-        LlamaForCausalLM.forward = fast_cross_entropy_loss_forward  # pylint: disable=undefined-variable  # noqa: F821
+        loss_utils.ForCausalLMLoss = UnslothForCausalLMLoss  # type: ignore[assignment]
     else:
         raise ValueError("Unsupported model type")
 
 
-def detab_code(code: str) -> Tuple[str, str]:
-    spaces = re.match(r"([\s\t]{1,})", code).group(0)
-    code = re.sub(r"^" + spaces, "", code, flags=re.MULTILINE)
-    return code, spaces
+self_attn_lora_patched = False  # pylint: disable=invalid-name
 
 
 def patch_self_attn_lora():
+    global self_attn_lora_patched  # pylint: disable=global-statement
+    if self_attn_lora_patched:
+        # prevent patching multiple times
+        return
     self_attn_forward = get_self_attn_code()
     LlamaFlashAttention2._original_forward = (  # pylint: disable=protected-access
         self_attn_forward
@@ -182,6 +132,7 @@ def patch_self_attn_lora():
         globals(),
     )
     exec(self_attn_forward, globals())  # pylint: disable=exec-used  # nosec B102
+    self_attn_lora_patched = True
     LOG.info("patching unsloth attn lora", main_process_only=True)
     LlamaFlashAttention2.forward = (
         unsloth_attn_forward  # pylint: disable=undefined-variable  # noqa: F821
@@ -231,7 +182,7 @@ def integrate_lora_mlp_patch(peft_model: PeftModelForCausalLM):
             for module in layer_modules
         )
         mlp_not_dora = all(
-            getattr(module, "lora_magnitude_vector", None) is None
+            len(getattr(module, "lora_magnitude_vector", []) or []) == 0
             for module in layer_modules
         )
 
@@ -256,7 +207,7 @@ def integrate_lora_patch(peft_model: PeftModelForCausalLM, cfg):
                 for module in layer_modules
             )
             qkv_not_dora = all(
-                getattr(module, "lora_magnitude_vector", None) is None
+                len(getattr(module, "lora_magnitude_vector", []) or []) == 0
                 for module in layer_modules
             )
 
@@ -275,7 +226,7 @@ def integrate_lora_patch(peft_model: PeftModelForCausalLM, cfg):
                 for module in layer_modules
             )
             o_not_dora = all(
-                getattr(module, "lora_magnitude_vector", None) is None
+                len(getattr(module, "lora_magnitude_vector", []) or []) == 0
                 for module in layer_modules
             )
 

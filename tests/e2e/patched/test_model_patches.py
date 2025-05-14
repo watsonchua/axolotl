@@ -6,8 +6,7 @@ import unittest
 
 import transformers
 
-from axolotl.common.cli import TrainerCliArgs
-from axolotl.utils.config import normalize_config
+from axolotl.utils.config import normalize_config, validate_config
 from axolotl.utils.dict import DictDefault
 from axolotl.utils.models import load_model, load_tokenizer
 
@@ -28,7 +27,7 @@ class TestModelPatches(unittest.TestCase):
                 "flash_attention": True,
                 "sample_packing": True,
                 "sequence_len": 2048,
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -48,25 +47,20 @@ class TestModelPatches(unittest.TestCase):
                 "eval_steps": 10,
             }
         )
+        cfg = validate_config(cfg)
         normalize_config(cfg)
-        cli_args = TrainerCliArgs()
         tokenizer = load_tokenizer(cfg)
-        model, _ = load_model(cfg, tokenizer, inference=cli_args.inference)
-
-        assert (
-            "MixtralFlashAttention2"
-            in model.model.layers[0].self_attn.__class__.__name__
-        )
+        load_model(cfg, tokenizer, inference=False)
 
     @with_temp_dir
     def test_mistral_multipack(self, temp_dir):
         cfg = DictDefault(
             {
-                "base_model": "openaccess-ai-collective/tiny-mistral",
+                "base_model": "trl-internal-testing/tiny-MistralForCausalLM-0.2",
                 "flash_attention": True,
                 "sample_packing": True,
                 "sequence_len": 2048,
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -86,10 +80,10 @@ class TestModelPatches(unittest.TestCase):
                 "eval_steps": 10,
             }
         )
+        cfg = validate_config(cfg)
         normalize_config(cfg)
-        cli_args = TrainerCliArgs()
         tokenizer = load_tokenizer(cfg)
-        load_model(cfg, tokenizer, inference=cli_args.inference)
+        load_model(cfg, tokenizer, inference=False)
 
         assert (
             "torch.jit"

@@ -1,6 +1,5 @@
-"""
-CLI to run training on a model
-"""
+"""CLI to run preprocessing of a dataset."""
+
 import logging
 import warnings
 from pathlib import Path
@@ -13,54 +12,32 @@ from colorama import Fore
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM
 
-from axolotl.cli import (
-    check_accelerate_default_config,
-    check_user_token,
-    load_cfg,
-    load_datasets,
-    load_rl_datasets,
-    print_axolotl_text_art,
-)
-from axolotl.common.cli import PreprocessCliArgs
+from axolotl.cli.args import PreprocessCliArgs
+from axolotl.cli.art import print_axolotl_text_art
+from axolotl.cli.checks import check_accelerate_default_config, check_user_token
+from axolotl.cli.config import load_cfg
 from axolotl.common.const import DEFAULT_DATASET_PREPARED_PATH
-from axolotl.prompt_strategies.sharegpt import (
-    register_chatml_template,
-    register_llama3_template,
-)
+from axolotl.common.datasets import load_datasets, load_preference_datasets
+from axolotl.integrations.base import PluginManager
+from axolotl.utils.dict import DictDefault
+from axolotl.utils.trainer import disable_datasets_caching
 
-LOG = logging.getLogger("axolotl.cli.preprocess")
+LOG = logging.getLogger(__name__)
 
 
-def do_cli(config: Union[Path, str] = Path("examples/"), **kwargs):
-    # pylint: disable=duplicate-code
+def do_preprocess(cfg: DictDefault, cli_args: PreprocessCliArgs) -> None:
+    """
+    Preprocesses dataset specified in axolotl config.
+
+    Args:
+        cfg: Dictionary mapping `axolotl` config keys to values.
+        cli_args: Preprocessing-specific CLI arguments.
+    """
     print_axolotl_text_art()
-    parsed_cfg = load_cfg(config, **kwargs)
-    parsed_cfg.is_preprocess = True
     check_accelerate_default_config()
     check_user_token()
-    parser = transformers.HfArgumentParser((PreprocessCliArgs))
-    parsed_cli_args, _ = parser.parse_args_into_dataclasses(
-        return_remaining_strings=True
-    )
 
-    if parsed_cfg.chat_template == "chatml":
-        if parsed_cfg.default_system_message:
-            LOG.info(
-                f"ChatML set. Adding default system message: {parsed_cfg.default_system_message}"
-            )
-            register_chatml_template(parsed_cfg.default_system_message)
-        else:
-            register_chatml_template()
-    elif parsed_cfg.chat_template == "llama3":
-        if parsed_cfg.default_system_message:
-            LOG.info(
-                f"LLaMA-3 set. Adding default system message: {parsed_cfg.default_system_message}"
-            )
-            register_llama3_template(parsed_cfg.default_system_message)
-        else:
-            register_llama3_template()
-
-    if not parsed_cfg.dataset_prepared_path:
+    if not cfg.dataset_prepared_path:
         msg = (
             Fore.RED
             + "preprocess CLI called without dataset_prepared_path set, "
@@ -68,15 +45,19 @@ def do_cli(config: Union[Path, str] = Path("examples/"), **kwargs):
             + Fore.RESET
         )
         LOG.warning(msg)
-        parsed_cfg.dataset_prepared_path = DEFAULT_DATASET_PREPARED_PATH
+        cfg.dataset_prepared_path = DEFAULT_DATASET_PREPARED_PATH
 
-    if parsed_cfg.rl:  # and parsed_cfg.rl != "orpo":
-        load_rl_datasets(cfg=parsed_cfg, cli_args=parsed_cli_args)
-    else:
-        load_datasets(cfg=parsed_cfg, cli_args=parsed_cli_args)
+    with disable_datasets_caching():
+        plugin_manager = PluginManager.get_instance()
+        if plugin_manager.load_datasets(cfg, preprocess=True):
+            pass
+        elif cfg.rl:
+            load_preference_datasets(cfg=cfg, cli_args=cli_args)
+        else:
+            load_datasets(cfg=cfg, cli_args=cli_args)
 
-    if parsed_cli_args.download:
-        model_name = parsed_cfg.base_model
+    if cli_args.download:
+        model_name = cfg.base_model
         with warnings.catch_warnings():
             # there are a bunch of useless UserWarnings about
             # "copying from a non-meta parameter in the checkpoint to a meta parameter in the current model"
@@ -93,9 +74,31 @@ def do_cli(config: Union[Path, str] = Path("examples/"), **kwargs):
 
     LOG.info(
         Fore.GREEN
-        + f"Success! Preprocessed data path: `dataset_prepared_path: {parsed_cfg.dataset_prepared_path}`"
+        + f"Success! Preprocessed data path: `dataset_prepared_path: {cfg.dataset_prepared_path}`"
         + Fore.RESET
     )
+
+
+def do_cli(
+    config: Union[Path, str] = Path("examples/"),
+    **kwargs,
+) -> None:
+    """
+    Parses `axolotl` config, CLI args, and calls `do_preprocess`.
+
+    Args:
+        config: Path to `axolotl` config YAML file.
+        kwargs: Additional keyword arguments to override config file values.
+    """
+    # pylint: disable=duplicate-code
+    parsed_cfg = load_cfg(config, **kwargs)
+    parsed_cfg.is_preprocess = True
+    parser = transformers.HfArgumentParser(PreprocessCliArgs)
+    parsed_cli_args, _ = parser.parse_args_into_dataclasses(
+        return_remaining_strings=True
+    )
+
+    do_preprocess(parsed_cfg, parsed_cli_args)
 
 
 if __name__ == "__main__":

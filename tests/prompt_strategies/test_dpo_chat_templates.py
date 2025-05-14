@@ -11,6 +11,8 @@ from transformers import AutoTokenizer
 from axolotl.prompt_strategies.dpo.chat_template import default
 from axolotl.utils.dict import DictDefault
 
+from tests.hf_offline_utils import enable_hf_offline
+
 
 @pytest.fixture(name="assistant_dataset")
 def fixture_assistant_dataset():
@@ -78,10 +80,18 @@ def fixture_custom_assistant_dataset():
     )
 
 
-@pytest.fixture(name="llama3_tokenizer")
-def fixture_llama3_tokenizer():
-    tokenizer = AutoTokenizer.from_pretrained("NousResearch/Meta-Llama-3-8B")
-    tokenizer.eos_token = "<|eot_id|>"
+@pytest.fixture(name="phi3_tokenizer")
+@enable_hf_offline
+def fixture_phi3_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-medium-128k-instruct")
+
+    return tokenizer
+
+
+@pytest.fixture(name="gemma_tokenizer")
+@enable_hf_offline
+def fixture_gemma_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained("unsloth/gemma-2b-it", revision="703fb4a")
 
     return tokenizer
 
@@ -99,7 +109,7 @@ class TestAssistantDPOChatTemplateLlama3:
                     "chat_template": "llama3",
                     "datasets": [
                         {
-                            "chat_template": "llama3",
+                            "type": "chat_template",
                         }
                     ],
                 }
@@ -124,7 +134,7 @@ class TestAssistantDPOChatTemplateLlama3:
                     "chat_template": "llama3",
                     "datasets": [
                         {
-                            "chat_template": "llama3",
+                            "type": "chat_template",
                             "field_messages": "conversation",
                             "field_chosen": "better",
                             "field_rejected": "worse",
@@ -150,6 +160,66 @@ class TestAssistantDPOChatTemplateLlama3:
         )
         assert result["chosen"] == "goodbye<|eot_id|>"
         assert result["rejected"] == "party on<|eot_id|>"
+
+
+class TestAssistantDPOChatTemplatePhi3:
+    """
+    Test class for assistant style datasets with phi-3 prompts using the tokenizer's chat_template strategy.
+    """
+
+    def test_phi3_defaults(self, phi3_tokenizer, assistant_dataset):
+        # pylint: disable=duplicate-code
+        transform_fn = default(
+            DictDefault(
+                {
+                    "chat_template": "tokenizer_default",
+                    "datasets": [
+                        {
+                            "type": "chat_template",
+                        }
+                    ],
+                }
+            )
+        )
+        result = transform_fn(assistant_dataset[0], tokenizer=phi3_tokenizer)
+        assert result["prompt"] == (
+            "<|user|>\nhello<|end|>\n"
+            + "<|assistant|>\nhello<|end|>\n"
+            + "<|user|>\ngoodbye<|end|>\n"
+            + "<|assistant|>\n"
+        )
+        assert result["chosen"] == "goodbye<|end|>"
+        assert result["rejected"] == "party on<|end|>"
+
+
+class TestAssistantDPOChatTemplateGemma:
+    """
+    Test class for assistant style datasets with gemma prompts using the tokenizer's chat_template strategy.
+    """
+
+    def test_gemma_defaults(self, gemma_tokenizer, assistant_dataset):
+        # pylint: disable=duplicate-code
+        transform_fn = default(
+            DictDefault(
+                {
+                    "chat_template": "tokenizer_default",
+                    "datasets": [
+                        {
+                            "type": "chat_template",
+                        }
+                    ],
+                }
+            )
+        )
+        result = transform_fn(assistant_dataset[0], tokenizer=gemma_tokenizer)
+        assert result["prompt"] == (
+            "<bos><start_of_turn>user\nhello<end_of_turn>\n"
+            + "<start_of_turn>model\nhello<end_of_turn>\n"
+            + "<start_of_turn>user\ngoodbye<end_of_turn>\n"
+            + "<start_of_turn>model\n"
+        )
+        assert result["chosen"] == "goodbye<end_of_turn>"
+        assert result["rejected"] == "party on<end_of_turn>"
 
 
 if __name__ == "__main__":

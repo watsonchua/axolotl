@@ -1,8 +1,10 @@
 base_model: hugging-quants/Meta-Llama-3.1-405B-BNB-NF4-BF16
+# optionally might have model_type or tokenizer_type
 tokenizer_type: AutoTokenizer
+# Automatically upload checkpoint and final model to HF
+# hub_model_id: username/custom_model_name
 
 load_in_4bit: true
-strict: false
 
 datasets:
   - path: tatsu-lab/alpaca
@@ -21,18 +23,15 @@ pad_to_sequence_len: true
 lora_r: 16
 lora_alpha: 16
 lora_dropout: 0.05
-lora_target_modules:
 lora_target_linear: true
 
 gradient_accumulation_steps: 4
 micro_batch_size: 1
 num_epochs: 2
-optimizer: adamw_torch
+optimizer: adamw_torch_fused
 lr_scheduler: cosine
 learning_rate: 0.00001
 
-train_on_inputs: false
-group_by_length: false
 bf16: true
 tf32: true
 

@@ -1,11 +1,10 @@
 ARG BASE_TAG=main-base
-FROM winglian/axolotl-base:$BASE_TAG
+FROM axolotlai/axolotl-base:$BASE_TAG
 
 ARG TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6+PTX"
 ARG AXOLOTL_EXTRAS=""
 ARG AXOLOTL_ARGS=""
 ARG CUDA="118"
-ENV BNB_CUDA_VERSION=$CUDA
 ARG PYTORCH_VERSION="2.1.2"
 
 ENV PYTORCH_VERSION=$PYTORCH_VERSION
@@ -20,12 +19,14 @@ RUN git clone --depth=1 https://github.com/axolotl-ai-cloud/axolotl.git
 WORKDIR /workspace/axolotl
 
 # If AXOLOTL_EXTRAS is set, append it in brackets
-RUN pip install causal_conv1d
 RUN if [ "$AXOLOTL_EXTRAS" != "" ] ; then \
-        pip install -e .[deepspeed,flash-attn,optimizers,$AXOLOTL_EXTRAS] $AXOLOTL_ARGS; \
+        pip install --no-build-isolation -e .[deepspeed,flash-attn,ring-flash-attn,optimizers,ray,$AXOLOTL_EXTRAS] $AXOLOTL_ARGS; \
     else \
-        pip install -e .[deepspeed,flash-attn,optimizers] $AXOLOTL_ARGS; \
+        pip install --no-build-isolation -e .[deepspeed,flash-attn,ring-flash-attn,optimizers,ray] $AXOLOTL_ARGS; \
     fi
+
+RUN python scripts/unsloth_install.py | sh
+RUN python scripts/cutcrossentropy_install.py | sh
 
 # So we can test the Docker image
 RUN pip install pytest

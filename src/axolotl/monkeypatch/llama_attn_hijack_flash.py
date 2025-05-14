@@ -4,7 +4,6 @@
 
 import logging
 import warnings
-from functools import partial
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -13,7 +12,9 @@ import transformers
 from einops import rearrange
 from flash_attn.bert_padding import pad_input, unpad_input
 from transformers.modeling_outputs import BaseModelOutputWithPast
-from transformers.models.llama.modeling_llama import LlamaAttention
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+)
 from transformers.models.llama.modeling_llama import (
     LlamaDecoderLayer as OriginalLlamaDecoderLayer,
 )
@@ -22,7 +23,6 @@ from transformers.models.llama.modeling_llama import (
     apply_rotary_pos_emb,
     repeat_kv,
 )
-from xformers.ops import SwiGLU
 
 from axolotl.monkeypatch.utils import get_cu_seqlens_from_pos_ids, set_module_name
 
@@ -44,7 +44,19 @@ except ImportError:
 LOG = logging.getLogger("axolotl")
 
 
+def is_xformers_available() -> bool:
+    try:
+        import xformers  # pylint: disable=unused-import  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def is_xformers_swiglu_available() -> bool:
+    if not is_xformers_available():
+        return False
+
     from xformers.ops.common import get_xformers_operator
 
     try:
@@ -57,6 +69,11 @@ def is_xformers_swiglu_available() -> bool:
 
 
 def replace_llama_mlp_with_swiglu(model):
+    if is_xformers_swiglu_available():
+        from axolotl.monkeypatch.xformers_ import FusedMLP
+    else:
+        raise RuntimeError("xformers SwiGLU not available for this environment")
+
     for name, module in model.named_modules():
         if isinstance(module, LlamaMLP):
             mlp = FusedMLP(
@@ -78,13 +95,32 @@ def replace_llama_qkv_with_fused(model):
             set_module_name(model, name, qkv)
 
 
-def patch_llama_cross_entropy():
-    from flash_attn.losses.cross_entropy import CrossEntropyLoss
-
-    LOG.info("patching with flash_attn.losses.cross_entropy")
-    transformers.models.llama.modeling_llama.CrossEntropyLoss = partial(
-        CrossEntropyLoss, inplace_backward=True
+def patch_fa_llama_cross_entropy():
+    LOG.info(
+        "patching transformers.loss.loss_utils.fixed_cross_entropy with flash_attn.ops.triton.cross_entropy"
     )
+    from flash_attn.ops.triton.cross_entropy import (
+        cross_entropy_loss as flash_attn_cross_entropy_loss,
+    )
+
+    def fa2_fixed_cross_entropy(
+        source,
+        target,
+        num_items_in_batch: int = None,
+        ignore_index: int = -100,
+        **kwargs,
+    ):  # pylint: disable=unused-argument
+        reduction = "sum" if num_items_in_batch is not None else "mean"
+        loss, _ = flash_attn_cross_entropy_loss(
+            source, target, ignore_index=ignore_index
+        )
+        if reduction == "sum":
+            loss = loss.sum() / num_items_in_batch
+        else:
+            loss = loss.sum() / (target != ignore_index).sum()
+        return loss
+
+    transformers.loss.loss_utils.fixed_cross_entropy = fa2_fixed_cross_entropy
 
 
 def patch_llama_rms_norm():
@@ -131,7 +167,7 @@ def replace_llama_attn_with_flash_attn(
 
     # skip only if explicitly disabled
     if cross_entropy:
-        patch_llama_cross_entropy()
+        patch_fa_llama_cross_entropy()
 
     # skip only if explicitly disabled
     if rms_norm:
@@ -179,49 +215,6 @@ class FusedAttention(LlamaAttention):
         new_attn.o_proj.weight.data = self.o_proj.weight.data
 
         set_module_name(model, name, new_attn)
-
-
-class FusedMLP(torch.nn.Module):
-    """
-    Fused MLP layer for incrementally improved training efficiency
-    """
-
-    def __init__(
-        self,
-        config,
-        gate_proj: torch.nn.Linear,
-        up_proj: torch.nn.Linear,
-        down_proj: torch.nn.Linear,
-    ):
-        super().__init__()
-        self.config = config
-        self.swiglu = SwiGLU(
-            in_features=config.hidden_size,
-            hidden_features=config.intermediate_size,
-            bias=False,
-            _pack_weights=True,
-        )
-        # overwrite initialized weights with pretrained weights
-        self.swiglu.w12.weight.data = torch.cat(
-            (gate_proj.weight.data, up_proj.weight.data), dim=0
-        )
-        self.swiglu.w3.weight.data = down_proj.weight.data
-
-    def _post_training(self, model, name):
-        w1, w2 = torch.split(  # pylint: disable=invalid-name
-            self.swiglu.w12.weight.data, self.config.intermediate_size, dim=0
-        )
-
-        # Assign the split weights back to the original layers
-        new_mlp = LlamaMLP(self.config)
-        new_mlp.gate_proj.weight.data = w1
-        new_mlp.up_proj.weight.data = w2
-        new_mlp.down_proj.weight.data = self.swiglu.w3.weight.data
-
-        set_module_name(model, name, new_mlp)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # pylint: disable=invalid-name
-        return self.swiglu(x)
 
 
 # Disable the transformation of the attention mask in LlamaModel as the flash attention
@@ -499,9 +492,11 @@ def flashattn_forward(
             # We have disabled _prepare_decoder_attention_mask in LlamaModel
             # the attention_mask should be the same as the key_padding_mask
             key_padding_mask=attention_mask,
-            query_padding_mask=attention_mask[:, -query_states.size(1) :]
-            if attention_mask is not None
-            else None,
+            query_padding_mask=(
+                attention_mask[:, -query_states.size(1) :]
+                if attention_mask is not None
+                else None
+            ),
         )
         output_unpad = flash_attn_varlen_qkvpacked_func(
             qkv_unpad,
@@ -540,9 +535,11 @@ def flashattn_forward(
                 value_states,
                 kvpacked=True,
                 key_padding_mask=attention_mask,
-                query_padding_mask=attention_mask[:, -query_states.size(1) :]
-                if attention_mask is not None
-                else None,
+                query_padding_mask=(
+                    attention_mask[:, -query_states.size(1) :]
+                    if attention_mask is not None
+                    else None
+                ),
             )
             if q_unpad.dtype != kv_unpad.dtype:
                 kv_unpad = kv_unpad.to(q_unpad.dtype)

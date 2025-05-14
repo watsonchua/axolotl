@@ -5,18 +5,17 @@ E2E tests for mixtral
 import logging
 import os
 import unittest
-from pathlib import Path
 
 import torch
 from transformers.utils import is_torch_bf16_gpu_available
 
-from axolotl.cli import load_datasets
-from axolotl.common.cli import TrainerCliArgs
+from axolotl.cli.args import TrainerCliArgs
+from axolotl.common.datasets import load_datasets
 from axolotl.train import train
-from axolotl.utils.config import normalize_config
+from axolotl.utils.config import normalize_config, validate_config
 from axolotl.utils.dict import DictDefault
 
-from .utils import with_temp_dir
+from .utils import check_model_output_exists, with_temp_dir
 
 LOG = logging.getLogger("axolotl.tests.e2e")
 os.environ["WANDB_DISABLED"] = "true"
@@ -50,7 +49,7 @@ class TestMixtral(unittest.TestCase):
                     "q_proj",
                     "w2",
                 ],
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -70,16 +69,18 @@ class TestMixtral(unittest.TestCase):
                 "eval_steps": 10,
             }
         )
+
+        cfg = validate_config(cfg)
         normalize_config(cfg)
         cli_args = TrainerCliArgs()
         dataset_meta = load_datasets(cfg=cfg, cli_args=cli_args)
 
-        model, _ = train(cfg=cfg, cli_args=cli_args, dataset_meta=dataset_meta)
+        model, _, _ = train(cfg=cfg, dataset_meta=dataset_meta)
         assert (
             model.base_model.model.model.layers[0].block_sparse_moe.gate.weight.dtype
             == torch.float32
         )
-        assert (Path(temp_dir) / "adapter_model.bin").exists()
+        check_model_output_exists(temp_dir, cfg)
 
     @with_temp_dir
     def test_qlora_wo_fa2(self, temp_dir):
@@ -104,7 +105,7 @@ class TestMixtral(unittest.TestCase):
                     "q_proj",
                     "w2",
                 ],
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -124,16 +125,18 @@ class TestMixtral(unittest.TestCase):
                 "eval_steps": 10,
             }
         )
+
+        cfg = validate_config(cfg)
         normalize_config(cfg)
         cli_args = TrainerCliArgs()
         dataset_meta = load_datasets(cfg=cfg, cli_args=cli_args)
 
-        model, _ = train(cfg=cfg, cli_args=cli_args, dataset_meta=dataset_meta)
+        model, _, _ = train(cfg=cfg, dataset_meta=dataset_meta)
         assert (
             model.base_model.model.model.layers[0].block_sparse_moe.gate.weight.dtype
             == torch.float32
         )
-        assert (Path(temp_dir) / "adapter_model.bin").exists()
+        check_model_output_exists(temp_dir, cfg)
 
     @with_temp_dir
     def test_16bit_lora_w_fa2(self, temp_dir):
@@ -157,7 +160,7 @@ class TestMixtral(unittest.TestCase):
                     "q_proj",
                     "w2",
                 ],
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -181,16 +184,18 @@ class TestMixtral(unittest.TestCase):
             cfg.bf16 = True
         else:
             cfg.fp16 = True
+
+        cfg = validate_config(cfg)
         normalize_config(cfg)
         cli_args = TrainerCliArgs()
         dataset_meta = load_datasets(cfg=cfg, cli_args=cli_args)
 
-        model, _ = train(cfg=cfg, cli_args=cli_args, dataset_meta=dataset_meta)
+        model, _, _ = train(cfg=cfg, dataset_meta=dataset_meta)
         assert (
             model.base_model.model.model.layers[0].block_sparse_moe.gate.weight.dtype
             == torch.float32
         )
-        assert (Path(temp_dir) / "adapter_model.bin").exists()
+        check_model_output_exists(temp_dir, cfg)
 
     @with_temp_dir
     def test_16bit_lora_wo_fa2(self, temp_dir):
@@ -214,7 +219,7 @@ class TestMixtral(unittest.TestCase):
                     "q_proj",
                     "w2",
                 ],
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -234,6 +239,8 @@ class TestMixtral(unittest.TestCase):
                 "eval_steps": 10,
             }
         )
+
+        cfg = validate_config(cfg)
         normalize_config(cfg)
         if is_torch_bf16_gpu_available():
             cfg.bf16 = True
@@ -242,12 +249,12 @@ class TestMixtral(unittest.TestCase):
         cli_args = TrainerCliArgs()
         dataset_meta = load_datasets(cfg=cfg, cli_args=cli_args)
 
-        model, _ = train(cfg=cfg, cli_args=cli_args, dataset_meta=dataset_meta)
+        model, _, _ = train(cfg=cfg, dataset_meta=dataset_meta)
         assert (
             model.base_model.model.model.layers[0].block_sparse_moe.gate.weight.dtype
             == torch.float32
         )
-        assert (Path(temp_dir) / "adapter_model.bin").exists()
+        check_model_output_exists(temp_dir, cfg)
 
     @with_temp_dir
     def test_ft(self, temp_dir):
@@ -258,7 +265,7 @@ class TestMixtral(unittest.TestCase):
                 "tokenizer_config": "LoneStriker/Mixtral-8x7B-v0.1-HF",
                 "flash_attention": True,
                 "sequence_len": 1024,
-                "val_set_size": 0.1,
+                "val_set_size": 0.02,
                 "special_tokens": {},
                 "datasets": [
                     {
@@ -282,9 +289,11 @@ class TestMixtral(unittest.TestCase):
             cfg.bf16 = True
         else:
             cfg.fp16 = True
+
+        cfg = validate_config(cfg)
         normalize_config(cfg)
         cli_args = TrainerCliArgs()
         dataset_meta = load_datasets(cfg=cfg, cli_args=cli_args)
 
-        train(cfg=cfg, cli_args=cli_args, dataset_meta=dataset_meta)
-        assert (Path(temp_dir) / "pytorch_model.bin").exists()
+        train(cfg=cfg, dataset_meta=dataset_meta)
+        check_model_output_exists(temp_dir, cfg)

@@ -1,11 +1,14 @@
 """
-test module for the axolotl.utis.data module
+test module for the axolotl.utils.data module
 """
+
 import unittest
 
 from transformers import LlamaTokenizer
 
 from axolotl.utils.data import encode_pretraining, md5
+
+from tests.hf_offline_utils import enable_hf_offline
 
 
 class TestEncodePretraining(unittest.TestCase):
@@ -13,6 +16,7 @@ class TestEncodePretraining(unittest.TestCase):
     test class for encode pretraining and md5 helper
     """
 
+    @enable_hf_offline
     def setUp(self):
         self.tokenizer = LlamaTokenizer.from_pretrained("huggyllama/llama-7b")
         self.tokenizer.add_special_tokens(
